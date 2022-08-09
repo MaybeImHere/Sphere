@@ -151,17 +151,6 @@
 
     internal class Program
     {
-        static double TotalKineticEnergy(Sphere[] s)
-        {
-            double kinetic_energy = 0;
-            foreach (Sphere sphere in s)
-            {
-                kinetic_energy += sphere.GetKineticEnergy();
-            }
-
-            return kinetic_energy;
-        }
-
         static bool IsWithinCircle(List<Sphere> s, double circle_radius)
         {
             foreach (Sphere sphere in s)
@@ -180,7 +169,6 @@
         /// <param name="min_check_time">The time to start checking entropy.</param>
         /// <param name="max_entropy_counter">The maximum number of samples to compute for entropy averaging.</param>
         /// <param name="entropy_scan_radius">The radius to scan at for entropy scanning.</param>
-        /// <param name="rand">The random number generator.</param>
         /// <returns>One datapoint corresponding to the average time taken to lower in entropy. (entropy_radius, time_taken)</returns>
         /// <exception cref="Exception">Thrown if boundary radius too small</exception>
         static (double, double) CalcDataPoint(
@@ -344,7 +332,7 @@
     // License link: https://creativecommons.org/licenses/by-sa/4.0/
     public static class ThreadSafeRandom
     {
-        private static readonly Random GlobalRandom = new Random();
+        private static readonly Random GlobalRandom = new();
         private static readonly ThreadLocal<Random> LocalRandom = new(() =>
         {
             lock (GlobalRandom)
