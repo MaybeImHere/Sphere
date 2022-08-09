@@ -162,7 +162,7 @@
             return kinetic_energy;
         }
 
-        static bool IsWithinCircle(Sphere[] s, double circle_radius)
+        static bool IsWithinCircle(List<Sphere> s, double circle_radius)
         {
             foreach (Sphere sphere in s)
             {
@@ -170,74 +170,58 @@
             }
             return true;
         }
-        
-        static void Main()
+
+        /// <summary>
+        /// Calculates one data point on the entropy-time graph
+        /// </summary>
+        /// <param name="boundary_radius">Radius of the solid circular boundary centered on the origin.</param>
+        /// <param name="dt">The time step for the simulation.</param>
+        /// <param name="max_time">The maximum time to process for each individual simulation.</param>
+        /// <param name="min_check_time">The time to start checking entropy.</param>
+        /// <param name="max_entropy_counter">The maximum number of samples to compute for entropy averaging.</param>
+        /// <param name="entropy_scan_radius">The radius to scan at for entropy scanning.</param>
+        /// <param name="rand">The random number generator.</param>
+        /// <returns>One datapoint corresponding to the average time taken to lower in entropy. (entropy_radius, time_taken)</returns>
+        /// <exception cref="Exception">Thrown if boundary radius too small</exception>
+        static (double, double) CalcDataPoint(
+            double boundary_radius, 
+            double dt, 
+            double max_time,
+            double min_check_time,
+            int max_entropy_counter,
+            double entropy_scan_radius,
+            int number_of_spheres)
         {
-            File.Delete("./pos.txt");
-            File.Delete("./entropy.txt");
-            var rand = new Random();
-
-            // radius of collision boundary (circle)
-            const double boundary_radius = 20.0;
-
-            // timestep of sim
-            const double dt = 0.01;
-
-            // max time spent on each simulation (recommended = 200.0, as the average simulation seems to approach a value of 100.0)
-            const double max_time = 200.0;
-
-            // the time the program should start checking the entropy (recommended = 10.0)
-            const double min_check_time = 10.0;
-
-            // debug option (false = release mode)
-            const bool print_positions = false;
-
-            // debug option (true = release mode)
-            const bool do_full_sim = true;
-
-            // the starting radius of the circle that will be used to detect the entropy (roughly)
-            // if every circle is within the scan radius, then the entropy is probably lower
-            double entropy_scan_radius = 20.0;
-
-            // the rate at which to decrease the entropy radius. smaller = more continous looking graphs but also longer compute times.
-            const double entropy_scan_radius_step = 0.25;
-
-            // how many times to rerun each colliding sim to get more accurate average times for the entropy to decrease
-            const int max_entropy_counter = 500;
-
-            // list of previous times for the entropy to decrease to the radius for averaging
             List<double> previous_entropy_times = new();
 
-            // main loop controlling the repetition of the scanning
-            while (entropy_scan_radius > 0.0)
+            // main data computing loop
+            while (true)
             {
-                Sphere[] spheres = new Sphere[8];
-                // total simulation time (for this individual sim, not total program time)
-                double total_time = 0.0;
+                List<Sphere> spheres = new();
 
-                // used for debugging
-#pragma warning disable CS0219
-                double last_print_time = 0.0;
-#pragma warning restore CS0219
+                // total simulation time (for the individual sims, not total program time)
+                double total_time = 0.0;
 
                 // to spawn spheres, we will use the equation r = 2.2 * theta to find where to put the center of the circle
                 // with theta increasing by 1 for the next position of the circle.
                 Vec2D polar_circle_point = new() { m1 = 0, m2 = 0 };
 
                 // sphere initialization
-                for (int i = 0; i < spheres.Length; i++)
+                for (int i = 0; i < number_of_spheres; i++)
                 {
                     Vec2D sphere_center = polar_circle_point.ToCart();
-                    spheres[i] = new Sphere(sphere_center.m1, sphere_center.m2)
+                    spheres.Add(new Sphere(sphere_center.m1, sphere_center.m2)
                     {
                         // give them random velocities
                         // this doesn't choose a point over a circle with uniform probability, but it doesn't need to. It's good enough
-                        vel = new Vec2D { m1 = rand.NextDouble() * 12 - 6, m2 = rand.NextDouble() * 12 - 6 }.ToPolar()
-                    };
+                        vel = new Vec2D { m1 = ThreadSafeRandom.NextDouble() * 12 - 6, m2 = ThreadSafeRandom.NextDouble() * 12 - 6 }.ToPolar()
+                    });
 
-                    polar_circle_point.m2 += 1.0; // theta
+                    polar_circle_point.m2 += 1.0; // changing theta
 
                     // if the circle would be placed outside of the boundary
+                    // the 1.0 is circle radius (hardcoded for now)
+                    // the 2.2 is a magic constant that seems to work well for the function
                     if (2.2 * polar_circle_point.m2 > boundary_radius - 1.0)
                     {
                         throw new Exception("ERROR: boundary radius too small, or too many circles");
@@ -248,19 +232,12 @@
                 // the loop for the individual simulations
                 while (total_time < max_time)
                 {
-                    // debug code to print position of individual circle
-                    if (print_positions && (last_print_time == 0.0 || total_time - last_print_time > 0.5))
-                    {
-                        File.AppendAllText("./pos.txt", total_time.ToString("F3") + '\t' + (spheres[0].pos.m1).ToString("F3") + "\t" + TotalKineticEnergy(spheres).ToString("F3") + "\n");
-                        last_print_time = total_time;
-                    }
-
                     // updating velocity, collision detection
-                    for (int j = 0; j < spheres.Length - 1; j++)
+                    for (int j = 0; j < number_of_spheres - 1; j++)
                     {
                         // updates every circle boundary detection except for the last circle in the list.
                         spheres[j].BoundaryReflect(boundary_radius, dt);
-                        for (int k = j + 1; k < spheres.Length; k++)
+                        for (int k = j + 1; k < number_of_spheres; k++)
                         {
                             // we use mod to make sure the first circle is favored too much by reversing directions every other iteration
                             // this probably doesn't matter very much
@@ -279,47 +256,106 @@
                     spheres[^1].BoundaryReflect(boundary_radius, dt);
 
                     // updating position
-                    for (int j = 0; j < spheres.Length; j++)
+                    for (int j = 0; j < number_of_spheres; j++)
                     {
                         spheres[j].UpdatePos(dt);
                     }
 
                     // check the entropy with the circle method
                     // the total_time check is to allow the system settle a bit.
-                    if (do_full_sim && total_time > min_check_time)
+                    if (total_time > min_check_time)
                     {
                         if (IsWithinCircle(spheres, entropy_scan_radius))
                         {
                             if (previous_entropy_times.Count > max_entropy_counter)
                             {
                                 double average = previous_entropy_times.Sum();
-                                average /= previous_entropy_times.Count;
-                                previous_entropy_times.Clear();
-
-                                entropy_scan_radius -= entropy_scan_radius_step;
-                                Console.WriteLine("Current radius difference: " + (boundary_radius - entropy_scan_radius).ToString("F3"));
-
-                                File.AppendAllText("./entropy.txt", (boundary_radius - entropy_scan_radius).ToString("F4") + '\t' + average.ToString("F4") + "\n");
+                                return (entropy_scan_radius, average / previous_entropy_times.Count);
                             }
                             else
                             {
                                 previous_entropy_times.Add(total_time);
                             }
-                            // make sure to move on to next iteration, otherwise the program will keep simulating the current simulation.
+                            // make sure to move on to next simulation, otherwise the program will keep simulating the current simulation.
                             break;
                         }
                     }
 
                     total_time += dt;
                 }
-
-                // enabled in debug situations
-#pragma warning disable CS0162 
-                if (!do_full_sim) goto exit_loop;
-#pragma warning restore CS0162 // Unreachable code detected
             }
-        exit_loop:;
+            
         }
-        
+
+        static async Task Main()
+        {
+            File.Delete("./entropy.txt");
+
+            // radius of collision boundary (circle)
+            const double boundary_radius = 20.0;
+
+            // number of spheres
+            const int number_of_spheres = 8;
+
+            // timestep of sim
+            const double dt = 0.01;
+
+            // max time spent on each simulation (recommended = 200.0, as the average simulation seems to approach a value of 100.0)
+            const double max_time = 200.0;
+
+            // the time the program should start checking the entropy (recommended = 10.0)
+            const double min_check_time = 10.0;
+
+            // the starting radius of the circle that will be used to detect the entropy (roughly)
+            // if every circle is within the scan radius, then the entropy is probably lower
+            double entropy_scan_radius = 20.0;
+
+            // the rate at which to decrease the entropy radius. smaller = more continous looking graphs but also longer compute times.
+            const double entropy_scan_radius_step = 0.25;
+
+            // how many times to rerun each colliding sim to get more accurate average times for the entropy to decrease
+            const int max_entropy_counter = 500;
+
+            // number of threads to run
+            const int num_of_threads = 4;
+
+            var tasks = new List<Task<(double, double)>>();
+
+            while(entropy_scan_radius > 0)
+            {
+                while(tasks.Count < num_of_threads)
+                {
+                    Console.WriteLine("{0:F3}", entropy_scan_radius);
+                    tasks.Add(Task.Run(() => { var e_temp = entropy_scan_radius; return CalcDataPoint(boundary_radius, dt, max_time, min_check_time, max_entropy_counter, e_temp, number_of_spheres);}));
+                    entropy_scan_radius -= entropy_scan_radius_step;
+                }
+
+                Task<(double, double)> finished_task = await Task.WhenAny(tasks);
+                File.AppendAllText("./entropy.txt", (boundary_radius - finished_task.Result.Item1).ToString("F4") + '\t' + finished_task.Result.Item2.ToString("F4") + "\n");
+                tasks.Remove(finished_task);
+            }
+        }
+    }
+
+    // ThreadSafeRandom class was taken from https://stackoverflow.com/a/57962385 and modified.
+    // Author: Ohad Schneider (https://stackoverflow.com/users/67824/ohad-schneider).
+    // The licensor does not endorse me or my use.
+    // Licensed under CC BY-SA 4.0
+    // License link: https://creativecommons.org/licenses/by-sa/4.0/
+    public static class ThreadSafeRandom
+    {
+        private static readonly Random GlobalRandom = new Random();
+        private static readonly ThreadLocal<Random> LocalRandom = new(() =>
+        {
+            lock (GlobalRandom)
+            {
+                return new Random(GlobalRandom.Next());
+            }
+        });
+
+        public static double NextDouble()
+        {
+            return LocalRandom.Value.NextDouble();
+        }
     }
 }
