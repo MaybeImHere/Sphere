@@ -165,16 +165,16 @@
         /// </summary>
         /// <param name="boundary_radius">Radius of the solid circular boundary centered on the origin.</param>
         /// <param name="dt">The time step for the simulation.</param>
-        /// <param name="max_time">The maximum time to process for each individual simulation.</param>
+        /// <param name="max_time">The maximum time to process for each individual simulation. Pass null for no tim limit.</param>
         /// <param name="min_check_time">The time to start checking entropy.</param>
         /// <param name="max_entropy_counter">The maximum number of samples to compute for entropy averaging.</param>
         /// <param name="entropy_scan_radius">The radius to scan at for entropy scanning.</param>
-        /// <returns>One datapoint corresponding to the average time taken to lower in entropy. (entropy_radius, time_taken)</returns>
+        /// <returns>One datapoint corresponding to the average time taken to lower in entropy.</returns>
         /// <exception cref="Exception">Thrown if boundary radius too small</exception>
-        static (double, double) CalcDataPoint(
+        static double CalcDataPoint(
             double boundary_radius, 
             double dt, 
-            double max_time,
+            double? max_time,
             double min_check_time,
             int max_entropy_counter,
             double entropy_scan_radius,
@@ -218,8 +218,14 @@
                 }
 
                 // the loop for the individual simulations
-                while (total_time < max_time)
+                while (true)
                 {
+                    // check to see if over time limit if max_time is provided
+                    if (max_time != null)
+                    {
+                        if (!(total_time < max_time)) break;
+                    }
+
                     // updating velocity, collision detection
                     for (int j = 0; j < number_of_spheres - 1; j++)
                     {
@@ -258,7 +264,9 @@
                             if (previous_entropy_times.Count > max_entropy_counter)
                             {
                                 double average = previous_entropy_times.Sum();
-                                return (entropy_scan_radius, average / previous_entropy_times.Count);
+                                // the system is only being recored starting at min_check_time, so we don't want to move the graph up by
+                                // min_check_time for no reason.
+                                return average / previous_entropy_times.Count - min_check_time; 
                             }
                             else
                             {
@@ -286,41 +294,46 @@
             const int number_of_spheres = 8;
 
             // timestep of sim
-            const double dt = 0.01;
+            const double dt = 0.02;
 
-            // max time spent on each simulation (recommended = 200.0, as the average simulation seems to approach a value of 100.0)
-            const double max_time = 200.0;
+            // max time spent on each simulation (null for no limit)
+            double? max_time = 1000.0;
 
             // the time the program should start checking the entropy (recommended = 10.0)
-            const double min_check_time = 10.0;
+            const double min_check_time = 8.0;
 
             // the starting radius of the circle that will be used to detect the entropy (roughly)
             // if every circle is within the scan radius, then the entropy is probably lower
             double entropy_scan_radius = 20.0;
 
             // the rate at which to decrease the entropy radius. smaller = more continous looking graphs but also longer compute times.
-            const double entropy_scan_radius_step = 0.25;
+            const double entropy_scan_radius_step = 0.5;
 
             // how many times to rerun each colliding sim to get more accurate average times for the entropy to decrease
-            const int max_entropy_counter = 500;
+            const int max_entropy_counter = 400;
 
             // number of threads to run
-            const int num_of_threads = 4;
+            const int num_of_threads = 5;
 
-            var tasks = new List<Task<(double, double)>>();
+
+            // entropy_scan_radius: task
+            var tasks_dict = new Dictionary<Task<double>, double>();
 
             while(entropy_scan_radius > 0)
             {
-                while(tasks.Count < num_of_threads)
+                while(tasks_dict.Count < num_of_threads)
                 {
-                    Console.WriteLine("{0:F3}", entropy_scan_radius);
-                    tasks.Add(Task.Run(() => { var e_temp = entropy_scan_radius; return CalcDataPoint(boundary_radius, dt, max_time, min_check_time, max_entropy_counter, e_temp, number_of_spheres);}));
+                    Console.WriteLine("Current scan radius: {0:F3}", entropy_scan_radius);
+                    tasks_dict.Add(
+                        Task.Run(() => { var e_temp = entropy_scan_radius; return CalcDataPoint(boundary_radius, dt, max_time, min_check_time, max_entropy_counter, e_temp, number_of_spheres); }),
+                        entropy_scan_radius
+                    );
                     entropy_scan_radius -= entropy_scan_radius_step;
                 }
 
-                Task<(double, double)> finished_task = await Task.WhenAny(tasks);
-                File.AppendAllText("./entropy.txt", (boundary_radius - finished_task.Result.Item1).ToString("F4") + '\t' + finished_task.Result.Item2.ToString("F4") + "\n");
-                tasks.Remove(finished_task);
+                Task<double> finished_task = await Task.WhenAny(tasks_dict.Keys);
+                File.AppendAllText("./entropy.txt", (boundary_radius - tasks_dict[finished_task]).ToString("F4") + '\t' + finished_task.Result.ToString("F5") + "\n");
+                tasks_dict.Remove(finished_task);
             }
         }
     }
